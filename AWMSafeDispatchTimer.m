@@ -77,8 +77,15 @@ static const void *kAWMSafeDispatchTimerSpecificKey = &kAWMSafeDispatchTimerSpec
 }
 
 - (void)cancel {
+    // 弱引用捕获：绝不能在异步 block 里强持有 self 后再访问它。
+    // 尤其在 dealloc 路径上，强捕获会把一个正在析构的对象“复活”成悬垂指针。
+    __weak __typeof(self) weakSelf = self;
     dispatch_async(self.synchronizationQueue, ^{
-      [self cancelLocked];
+      __strong __typeof(weakSelf) strongSelf = weakSelf;
+      if (!strongSelf) {
+          return;
+      }
+      [strongSelf cancelLocked];
     });
 }
 
@@ -114,10 +121,22 @@ static const void *kAWMSafeDispatchTimerSpecificKey = &kAWMSafeDispatchTimerSpec
 }
 
 - (void)dealloc {
-    if (self.synchronizationQueue) {
-        dispatch_queue_set_specific(self.synchronizationQueue, kAWMSafeDispatchTimerSpecificKey, NULL, NULL);
+    if (_synchronizationQueue) {
+        dispatch_queue_set_specific(_synchronizationQueue, kAWMSafeDispatchTimerSpecificKey, NULL, NULL);
     }
-    [self cancel];
+    // 析构阶段不能再 dispatch 出去等回调：那时 self 已开始释放，
+    // 任何跨队列的异步访问都会变成 use-after-free。这里就地同步拆除定时器。
+    if (_internalTimer) {
+        dispatch_source_t timer = _internalTimer;
+        _internalHandler = nil;
+        _internalTimer = nil;
+        if (_resumed) {
+            dispatch_source_set_event_handler(timer, ^{});
+            dispatch_source_cancel(timer);
+            _resumed = NO;
+        }
+        _running = NO;
+    }
 }
 
 @end

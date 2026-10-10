@@ -39,6 +39,29 @@ static id dyyyRemoteConfigChangedToken = nil;
 static char kDYYYWeatherViewGestureInstalledKey;
 static char kDYYYWeatherSubviewGestureInstalledKey;
 
+// 逐级向上解析容器视图，取代原先 `self.superview.superview.superview` 的链式盲解引用。
+// 链式写法会把三级的取值压在一条表达式里，一旦其中某一级返回的是已被拆毁/回收的视图，
+// 下一次解引用就是 EXC_BAD_ACCESS（实测崩溃点正是这条链的第三级）。
+// 这里每取一级立即判空，层级不完整时退回 view 自身，保持原有的 `?: self` 语义。
+static UIView *DYYYResolveBarContainer(UIView *view) {
+    if (!view) {
+        return nil;
+    }
+    UIView *level1 = view.superview;
+    if (!level1) {
+        return view;
+    }
+    UIView *level2 = level1.superview;
+    if (!level2) {
+        return view;
+    }
+    UIView *level3 = level2.superview;
+    if (!level3) {
+        return view;
+    }
+    return level3;
+}
+
 static NSString *DYYYCurrentSpeedSettingsDisplayString(void) {
     id value = [[NSUserDefaults standardUserDefaults] objectForKey:@"DYYYSpeedSettings"];
     if ([value isKindOfClass:[NSString class]] && [(NSString *)value length] > 0) {
@@ -765,12 +788,26 @@ static void DYYYBuildSettingsSearchIndexIfNeeded(NSArray<AWESettingItemModel *> 
 
 - (void)didMoveToSuperview {
     %orig;
+    // 同步读取：此刻 self 一定有效。特征判断不通过就完全不调度延迟回调，
+    // 避免把一个本可以立刻得出的结论推迟到 0.3s 之后、再对可能已被拆毁的视图层级做解引用。
+    NSString *accessibilityLabel = self.accessibilityLabel;
+    if (![accessibilityLabel isEqualToString:@"设置"]) {
+        return;
+    }
+    // 弱引用捕获：block 若强持有 self，会让一个本应在 0.3s 内被 UIKit 释放的视图“苟活”
+    // 到回调执行时——此时它的内部层级已失效，回调里再摸 superview 就会踩到悬垂指针。
+    // 改用 weak 后，视图正常释放时 weakSelf 自动置 nil，回调直接空转退出。
+    __weak __typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        NSString *accessibilityLabel = self.accessibilityLabel;
-        if (![accessibilityLabel isEqualToString:@"设置"]) {
+        __strong __typeof(weakSelf) strongSelf = weakSelf;
+        // 视图已释放，或已脱离窗口层级：一律放弃，绝不继续触碰视图层级
+        if (!strongSelf || !strongSelf.window) {
             return;
         }
-        UIView *targetSuperView = self.superview.superview.superview ?: self;
+        UIView *targetSuperView = DYYYResolveBarContainer(strongSelf);
+        if (!targetSuperView) {
+            return;
+        }
         UIButton *oldBtn = (UIButton *)[targetSuperView viewWithTag:232323];
         if (oldBtn) {
             [oldBtn removeFromSuperview];
@@ -784,12 +821,12 @@ static void DYYYBuildSettingsSearchIndexIfNeeded(NSArray<AWESettingItemModel *> 
         [dyyyBtn setTitleColor:titleColor forState:UIControlStateNormal];
 
         dyyyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-        CGRect frame = self.frame;
+        CGRect frame = strongSelf.frame;
         dyyyBtn.frame = CGRectMake(frame.origin.x + frame.size.width - 40 - 2, 8, 60, 32);
         dyyyBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
         dyyyBtn.layer.cornerRadius = 8;
         dyyyBtn.clipsToBounds = YES;
-        [dyyyBtn addTarget:self action:@selector(dyyyButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+        [dyyyBtn addTarget:strongSelf action:@selector(dyyyButtonTapped) forControlEvents:UIControlEventTouchUpInside];
         [targetSuperView addSubview:dyyyBtn];
     });
 }
@@ -813,12 +850,26 @@ static void DYYYBuildSettingsSearchIndexIfNeeded(NSArray<AWESettingItemModel *> 
 
 - (void)didMoveToSuperview {
     %orig;
+    // 同步读取：此刻 self 一定有效。特征判断不通过就完全不调度延迟回调，
+    // 避免把一个本可以立刻得出的结论推迟到 0.3s 之后、再对可能已被拆毁的视图层级做解引用。
+    NSString *accessibilityLabel = self.accessibilityLabel;
+    if (![accessibilityLabel isEqualToString:@"设置"]) {
+        return;
+    }
+    // 弱引用捕获：block 若强持有 self，会让一个本应在 0.3s 内被 UIKit 释放的视图“苟活”
+    // 到回调执行时——此时它的内部层级已失效，回调里再摸 superview 就会踩到悬垂指针。
+    // 改用 weak 后，视图正常释放时 weakSelf 自动置 nil，回调直接空转退出。
+    __weak __typeof(self) weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        NSString *accessibilityLabel = self.accessibilityLabel;
-        if (![accessibilityLabel isEqualToString:@"设置"]) {
+        __strong __typeof(weakSelf) strongSelf = weakSelf;
+        // 视图已释放，或已脱离窗口层级：一律放弃，绝不继续触碰视图层级
+        if (!strongSelf || !strongSelf.window) {
             return;
         }
-        UIView *targetSuperView = self.superview.superview.superview ?: self;
+        UIView *targetSuperView = DYYYResolveBarContainer(strongSelf);
+        if (!targetSuperView) {
+            return;
+        }
         UIButton *oldBtn = (UIButton *)[targetSuperView viewWithTag:232323];
         if (oldBtn) {
             [oldBtn removeFromSuperview];
@@ -832,12 +883,12 @@ static void DYYYBuildSettingsSearchIndexIfNeeded(NSArray<AWESettingItemModel *> 
         [dyyyBtn setTitleColor:titleColor forState:UIControlStateNormal];
 
         dyyyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-        CGRect frame = self.frame;
+        CGRect frame = strongSelf.frame;
         dyyyBtn.frame = CGRectMake(frame.origin.x + frame.size.width - 60 - 10 - 2, 8, 60, 32);
         dyyyBtn.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin;
         dyyyBtn.layer.cornerRadius = 8;
         dyyyBtn.clipsToBounds = YES;
-        [dyyyBtn addTarget:self action:@selector(dyyyButtonTapped) forControlEvents:UIControlEventTouchUpInside];
+        [dyyyBtn addTarget:strongSelf action:@selector(dyyyButtonTapped) forControlEvents:UIControlEventTouchUpInside];
         [targetSuperView addSubview:dyyyBtn];
     });
 }

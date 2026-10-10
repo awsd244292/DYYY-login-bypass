@@ -5775,12 +5775,23 @@ static void DYYYApplyAvatarFollowPromptSettingsWithRetry(id owner) {
     }
 
     objc_setAssociatedObject(owner, &kDYYYAvatarFollowDeferredApplyKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    id target = owner;
+    // 弱引用捕获：与侧边栏入口那处崩溃同一个模式——
+    // 若强持有 owner，它会“撑”到延迟回调执行时，而此时其内部视图层级可能已被拆毁。
+    // 弱引用下 owner 正常释放即自动置 nil，回调直接放弃。
+    __weak id weakTarget = owner;
     dispatch_async(dispatch_get_main_queue(), ^{
+        id target = weakTarget;
+        if (!target) {
+            return;
+        }
         DYYYApplyAvatarFollowPromptSettings(target);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            DYYYApplyAvatarFollowPromptSettings(target);
-            objc_setAssociatedObject(target, &kDYYYAvatarFollowDeferredApplyKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            id innerTarget = weakTarget;
+            if (!innerTarget) {
+                return;
+            }
+            DYYYApplyAvatarFollowPromptSettings(innerTarget);
+            objc_setAssociatedObject(innerTarget, &kDYYYAvatarFollowDeferredApplyKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         });
     });
 }
@@ -12124,7 +12135,9 @@ static Class TagViewClass = nil;
 }
 
 - (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    // 只注销插件自己注册的观察者，不要用 removeObserver:self 一把梭——
+    // 那会连抖音/系统给同一对象注册的通知一起注销，属于典型的连带破坏。
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:kDYYYGlobalTransparencyDidChangeNotification object:nil];
     %orig;
 }
 
@@ -12338,7 +12351,9 @@ static Class TagViewClass = nil;
 }
 
 - (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    // 只注销插件自己注册的观察者，不要用 removeObserver:self 一把梭——
+    // 那会连抖音/系统给同一对象注册的通知一起注销，属于典型的连带破坏。
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:kDYYYGlobalTransparencyDidChangeNotification object:nil];
     %orig;
 }
 
@@ -12645,7 +12660,9 @@ static Class TagViewClass = nil;
 }
 
 - (void)dealloc {
-    [[NSNotificationCenter defaultCenter] removeObserver:self];
+    // 只注销插件自己注册的观察者，不要用 removeObserver:self 一把梭——
+    // 那会连抖音/系统给同一对象注册的通知一起注销，属于典型的连带破坏。
+    [[NSNotificationCenter defaultCenter] removeObserver:self name:kDYYYGlobalTransparencyDidChangeNotification object:nil];
     %orig;
 }
 
