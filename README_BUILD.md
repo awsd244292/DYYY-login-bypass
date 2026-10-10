@@ -1,16 +1,52 @@
-# DYYY 构建指南（产出 .deb）
+# DYYY 构建与使用指南
 
 > DYYY 是一个 **iOS Theos/Logos Tweak**（用于调整抖音 UI / 绕过登录等）。
 > 它产出的 `.deb` 是 **`iphoneos-arm` 包**，必须在 **macOS + Theos + iOS SDK + ldid**
 > 环境下交叉编译，**无法在 Linux / Windows 上直接编译**。
 
+## 📌 先搞清楚你是哪类用户（很重要）
+
+| 你的设备环境 | 该用什么 | 说明 |
+|---|---|---|
+| **自签证书**（AltStore / SideStore / Sideloadly / Esign） | **`DYYY_<版本>.dylib`** | ❌ **装不了 `.deb`**。未越狱设备没有 `mobilesubstrate` 提供方，deb 依赖不满足。请在重签 IPA 时把 dylib 注入进去 |
+| **巨魔 TrollStore**（永久签名，非越狱） | **`DYYY_<版本>.dylib`** | ❌ 同上，不装 deb。用 **TrollFools** 把 dylib 注入抖音 IPA |
+| 越狱（Sileo / Zebra，有根） | `.deb`（rootful） | ✅ 直接安装 |
+| 越狱（Dopamine / ElleKit，无根） | `.deb`（rootless） | ✅ 直接安装 |
+| 越狱（roothide 系） | `.deb`（roothide） | ✅ 直接安装 |
+
+> **同一个 dylib，两种用法**：本仓库默认只产出 **`DYYY_<版本>.dylib`** 这一个文件，
+> 自签/巨魔用户直接拿它注入即可。如需 deb，见 §0 末尾切换 `scheme`。
+
+### 自签 / 巨魔用户：怎么把 dylib 装进抖音
+
+**方式 A — TrollStore（巨魔）推荐，一步到位**
+
+1. 手机上安装 TrollStore + [TrollFools](https://github.com/Lessica/TrollFools)。
+2. 打开 TrollFools → 选 **抖音（Aweme）** → 点 injecting → 选择 **`DYYY_<版本>.dylib`**。
+3. 等待注入完成自动重装 App（抖音数据不会丢）。
+4. 打开抖音 → 双指长按，或进「设置 → DYYY」，打开 **绕过登录（游客浏览）** 开关。
+
+**方式 B — 普通自签（AltStore / Sideloadly / Esign）**
+
+> 这类方式每次在 **电脑端重签 IPA 时** 注入 dylib，App 有效期取决于你的证书（免费开发者证书 7 天）。
+
+1. 准备抖音砸壳 IPA。
+2. 用注入工具把 `DYYY_<版本>.dylib` 打进去：
+   - macOS：`Azule` / `Sideloadly`（Tweak 注入） / `insert_dylib`
+   - 命令行：`insert_dylib @executable_path/Frameworks/DYYY.dylib Aweme Payload/Aweme.app/Aweme`
+3. 用你的自签工具（AltStore / Sideloadly / Esign）重签并安装。
+4. 同上，打开 **绕过登录（游客浏览）** 开关。
+
+> ⚠️ **不要用 deb 走自签**：`control` 里写了 `Depends: firmware (>= 5.0), mobilesubstrate`，
+> 未越狱环境无法满足该依赖，即使强制安装也不会有任何注入效果。
+
 ---
 
 ## 0. 没有 Mac？用 GitHub Actions 云端构建（推荐）
 
-本仓库自带 `.github/workflows/build.yml`，会在 **GitHub 托管的 macOS  runner** 上
+本仓库自带 `.github/workflows/build.yml`，会在 **GitHub 托管的 macOS runner** 上
 用 `huami1314/theos-action` 自动装好 Theos + iOS SDK 并 `make package`，
-最后把 `rootful / rootless / roothide` 三种 `.deb` 作为 **构建产物（artifact）** 上传。
+最后把 **`DYYY_<版本>.dylib`** 作为 **构建产物（artifact）** 上传。
 你全程不需要任何本地工具链，也不需要有 Mac。
 
 步骤（约 5 分钟，免费 GitHub 账号即可）：
@@ -26,12 +62,25 @@
    ```
 3. 进入仓库的 **Actions** 标签页 → 选择 **build deb** → 点 **Run workflow**
    （也可直接等 push 触发的那次运行）。
-4. 运行结束后，在对应 run 的 **Artifacts** 里下载 `DYYY-<时间戳>.zip`，
-   里面包含三个 `.deb`（rootful / rootless / roothide）。
-5. 用 Sileo / Filza 安装对应你设备方案的 `.deb`，或用 TrollFools 注入到抖音 (Aweme)。
+4. 运行结束后，在对应 run 的 **Artifacts** 里下载 `DYYY-<版本号>.zip`，
+   **解压后只有一个文件：`DYYY_<版本>.dylib`** —— 自签/巨魔用户直接用它注入（见上表 / 上方方式 A、B）。
+5. （可选）越狱用户若要 `.deb`：手动 Run workflow 时把 **scheme** 选成 `rootful` / `rootless` /
+   `roothide` / `all`，然后用 Sileo / Zebra / Filza 安装即可。
 
 > 提示：`build.yml` 在 `workflow_dispatch`（手动 Run workflow）时**必定构建**，
 > 不会因为"没有检测到相关改动"而跳过。
+>
+> 为什么默认只用 **rootful** 包来提取 dylib？实测三者的 `.dylib` 代码逻辑完全一致
+> （共同的 15 个系统库依赖），**唯一差别是 `LC_ID_DYLIB` 与 `LC_RPATH`**：
+>
+> | 来源包 | `LC_ID_DYLIB` | `LC_RPATH`（越狱搜索路径） |
+> |---|---|---|
+> | **rootful** | `/Library/MobileSubstrate/DynamicLibraries/DYYY.dylib` | **0 个（无残留）** |
+> | rootless | `@rpath/DYYY.dylib` | 4 个（`/var/jb/...`、`@loader_path/.jbroot/...`） |
+> | roothide | `@loader_path/.jbroot/Library/MobileSubstrate/...` | — |
+>
+> 注入到未越狱 App 沙盒时，那些越狱路径全部无效。**rootful 版二进制内零越狱路径残留，最干净**，
+> 因此作为唯一的提取源。三者均含 `arm64` + `arm64e`（PAC）双切片，A8 以上设备通吃。
 
 ---
 

@@ -23,13 +23,13 @@ on:
   workflow_dispatch:
     inputs:
       scheme:
-        description: '打包方案（留空则全打）'
+        description: '打包方案（默认 rootful；自签/巨魔用户只用产出的 DYYY.dylib 注入到抖音 IPA）'
         required: false
-        default: 'all'
+        default: 'rootful'
         type: choice
         options:
-          - all
           - rootful
+          - all
           - rootless
           - roothide
 
@@ -116,6 +116,7 @@ jobs:
           done
              
       - name: Build Rootless
+        if: ${{ github.event.inputs.scheme == 'all' || github.event.inputs.scheme == 'rootless' }}
         run: |
           #make package FINALPACKAGE=1 -j$(sysctl -n hw.ncpu)
           make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1 -j$(sysctl -n hw.ncpu)
@@ -124,6 +125,7 @@ jobs:
           done
           
       - name: Build Roothide
+        if: ${{ github.event.inputs.scheme == 'all' || github.event.inputs.scheme == 'roothide' }}
         run: |
           make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1 -j$(sysctl -n hw.ncpu)
           for f in packages/*.deb; do
@@ -148,14 +150,18 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
 
-          deb_files=(packages/*.deb)
-          if [ "${#deb_files[@]}" -ne 3 ]; then
-            echo "Expected 3 Deb packages, found ${#deb_files[@]}:" >&2
-            printf '  %s\n' "${deb_files[@]}" >&2
-            exit 1
+          # rootful 是必产出项：自签/巨魔用户注入用的 DYYY.dylib 由它提供。
+          # rootful 版二进制内不含任何 LC_RPATH / /var/jb / .jbroot 越狱搜索路径，
+          # 注入到未越狱 App 沙盒时最干净，因此作为默认产出的提取源。
+          expected_schemes=(rootful)
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            case "${{ github.event.inputs.scheme }}" in
+              all) expected_schemes=(rootful rootless roothide) ;;
+              rootful|roothide) expected_schemes=(${{ github.event.inputs.scheme }}) ;;
+            esac
           fi
 
-          for scheme in rootful rootless roothide; do
+          for scheme in "${expected_schemes[@]}"; do
             scheme_files=(packages/*-"${scheme}".deb)
             if [ "${#scheme_files[@]}" -ne 1 ]; then
               echo "Expected exactly one ${scheme} package, found ${#scheme_files[@]}" >&2
@@ -163,17 +169,21 @@ jobs:
             fi
           done
 
+          deb_files=(packages/*.deb)
           printf 'Package artifact: %s\n' "${deb_files[@]}"
 
-      - name: Extract arm64e dylib
+      - name: Extract injectable dylib
         env:
           PACKAGE_VERSION: ${{ steps.package.outputs.version }}
+          # 自签/巨魔用户直接拿这个 dylib 注入到抖音 IPA。
+          # rootful 包的 dylib 不含 LC_RPATH 越狱搜索路径、不含 /var/jb、.jbroot 前缀，
+          # 注入场景最干净；且含 arm64 + arm64e 双切片。
+          SOURCE_DEB_GLOB: 'packages/*rootful*.deb'
+          REQUIRED_ARCH: 'arm64e'
         run: .github/scripts/extract-release-dylib.sh
 
-      - name: Upload package artifacts
+      - name: Upload injectable dylib
         uses: actions/upload-artifact@v7
         with:
-          name: DYYY-${{ steps.package.outputs.timestamp }}
-          path: |
-            ${{ github.workspace }}/packages/*.deb
-            ${{ github.workspace }}/packages/*.dylib
+          name: DYYY-${{ steps.package.outputs.version }}
+          path: ${{ github.workspace }}/packages/*.dylib
